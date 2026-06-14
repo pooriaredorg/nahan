@@ -1592,7 +1592,7 @@ async function handleTelegramWebhook(request, env, hostName, ctx) {
                 text += `⚠️ ${t("no_users")}\n`;
             } else {
                 pageUsers.forEach((u, idx) => {
-                    text += `${start + idx + 1}. 👤 **${u.name}**\n   <code>${u.id}</code>\n`;
+                    text += `${start + idx + 1}. 👤 **${u.name}**\n   \`${u.id}\`\n`;
                 });
             }
             text += `━━━━━━━━━━━━━━━━`;
@@ -1659,7 +1659,7 @@ async function handleTelegramWebhook(request, env, hostName, ctx) {
             let text = `👤 **${t("sub_info")}**\n`;
             text += `━━━━━━━━━━━━━━━━\n`;
             text += `📛 **${t("name")}**: ${u.name}\n`;
-            text += `🆔 **UUID**: <code>${u.id}</code>\n`;
+            text += `🆔 **UUID**: \`${u.id}\`\n`;
             text += `🚦 **${t("lbl_status")}**: ${statusEmoji} ${statusText}\n`;
             text += `📊 **${t("total")}**: ${usedGB} GB / ${limitGB} GB (${userReqs} reqs)\n`;
             text += `⏱ **${t("daily")}**: ${userDReqs} / ${limitDailyTxt}\n`;
@@ -1668,7 +1668,7 @@ async function handleTelegramWebhook(request, env, hostName, ctx) {
             text += `📱 **${t("device_limit")}**: ${maxCfgTxt}\n`;
             text += `📝 **${t("notes")}**: ${notesTxt}\n`;
             text += `━━━━━━━━━━━━━━━━\n`;
-            text += `🔗 **${t("lbl_subscription")}:**\n<code>${subSync}</code>`;
+            text += `🔗 **${t("lbl_subscription")}:**\n${subSync}`;
             
             const kb = {
                 inline_keyboard: [
@@ -2127,7 +2127,7 @@ async function handleTelegramWebhook(request, env, hostName, ctx) {
                     await fetch(`${tgApi}/sendMessage`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chat_id: chatId, text: `<code>${subUrl}</code>`, parse_mode: 'HTML' })
+                        body: JSON.stringify({ chat_id: chatId, text: subUrl })
                     });
                     answerText = t("sub_link_sent");
                 }
