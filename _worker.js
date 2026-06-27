@@ -5,7 +5,7 @@ import { connect } from "cloudflare:sockets";
  * Handles real-time binary streams from remote sensor nodes.
  */
 
-const CURRENT_VERSION = "2.9.1";
+const CURRENT_VERSION = "2.9.2";
 
 const getAlpha = () => String.fromCharCode(118, 108, 101, 115, 115);
 const getBeta = () => String.fromCharCode(116, 114, 111, 106, 97, 110);
@@ -1766,12 +1766,16 @@ async function handleConfigSync(request, env, ctx) {
             let nodes = nextConfig.slaveNodes.split(/[\r\n,;]+/).map(s=>s.trim()).filter(Boolean);
             let syncKey = nextConfig.syncApiKey || '';
             let currentHost = new URL(request.url).hostname;
+            // Strip master-only secrets so they never leave this panel. Slave nodes keep their
+            // own values (slave merges via { ...sysConfig, ...data.config }, so omitted keys are untouched).
+            let slaveConfig = { ...nextConfig };
+            ['cfAccountId', 'cfApiToken', 'cfWorkerName', 'tgToken', 'tgChatId', 'tgAdminId'].forEach(k => delete slaveConfig[k]);
             nodes.forEach(node => {
                 if(node !== currentHost) {
                      ctx?.waitUntil(fetch(`https://${node}/${encodeURI(nextConfig.apiRoute)}/api/sync`, {
                          method: 'POST',
                          headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify({ key: syncKey, config: nextConfig, fromMaster: true })
+                         body: JSON.stringify({ key: syncKey, config: slaveConfig, fromMaster: true })
                      }).catch(() => {}));
                 }
             });
@@ -3808,9 +3812,33 @@ function getAllProfiles(targetSub = null) {
     return list;
 }
 
+// Returns the hostname of a linked panel URL (strips scheme/path/port). The
+// linkedPanels API system (cross-panel sync) is untouched; here we only read
+// its URLs as extra parallel node hosts, restoring 2.6 "parallel node" behavior.
+function linkedPanelHost(p) {
+    let raw = (p && typeof p === 'object') ? (p.url || '') : (p || '');
+    raw = String(raw).trim();
+    if (!raw) return '';
+    raw = raw.replace(/^[a-zA-Z]+:\/\//, '');   // drop scheme
+    raw = raw.split('/')[0];                     // drop path
+    raw = raw.split('@').pop();                  // drop credentials
+    if (raw.startsWith('[')) {                    // [ipv6]:port
+        return raw.slice(0, raw.indexOf(']') + 1);
+    }
+    return raw.split(':')[0];                     // drop port
+}
+
+// Combined parallel-node host list = slaveNodes (legacy) + linkedPanels URLs (2.9 API).
+function getGlobalNodeHosts() {
+    let hosts = [];
+    if (sysConfig.slaveNodes) hosts.push(...sysConfig.slaveNodes.split(/[\r\n,;]+/).map(s=>s.trim()).filter(Boolean));
+    if (Array.isArray(sysConfig.linkedPanels)) hosts.push(...sysConfig.linkedPanels.map(linkedPanelHost).filter(Boolean));
+    return [...new Set(hosts)];
+}
+
 function buildSingleUri(hostName) {
     let allHostNames = [hostName];
-    if (sysConfig.slaveNodes) allHostNames.push(...sysConfig.slaveNodes.split(/[\r\n,;]+/).map(s=>s.trim()).filter(Boolean));
+    allHostNames.push(...getGlobalNodeHosts());
     let finalHost = allHostNames[0];
     let finalIP = getCleanIps(finalHost)[0];
     let ports = sysConfig.socketPorts ? sysConfig.socketPorts.split(',').map(s=>s.trim()).filter(Boolean) : ["443"];
@@ -4041,8 +4069,8 @@ function getProfileHostNames(hostName, profile) {
     let names = [primaryHost];
     if (profile && profile.userNodes) {
         names.push(...profile.userNodes.split(/[\r\n,;]+/).map(s=>s.trim()).filter(Boolean));
-    } else if (sysConfig.slaveNodes) {
-        names.push(...sysConfig.slaveNodes.split(/[\r\n,;]+/).map(s=>s.trim()).filter(Boolean));
+    } else {
+        names.push(...getGlobalNodeHosts());
     }
     return names;
 }
@@ -8348,7 +8376,7 @@ function getDashboardUI(hasDB) {
               buildModeCheckboxes('add-user-mode-wrap', null);
               buildIPCheckboxes("add-user-clean-ips-wrap", "", (window.nahanConfig?.cleanIps||"").split(/[\\s,;]+/).map(s=>s.trim()).filter(Boolean));
               buildIPCheckboxes("add-user-proxy-ips-wrap", "", (window.nahanConfig?.backupRelay||"").split(/[\\s,;]+/).map(s=>s.trim()).filter(Boolean));
-              buildNodeCheckboxes("add-user-nodes-wrap", "", (window.nahanConfig?.slaveNodes||"").split(/[\\s,;]+/).map(s=>s.trim()).filter(Boolean));
+              buildNodeCheckboxes("add-user-nodes-wrap", "", getGlobalNodeList());
           }
           function closeAddUserPage() {
               document.getElementById('view-add-user').classList.add('hidden');
@@ -8404,6 +8432,20 @@ function getSelectedCheckboxes(wrapId) {
     if(!wrap) return '';
     const checked = Array.from(wrap.querySelectorAll('input:checked')).map(cb => cb.value);
     return checked.join(',');
+}
+function getGlobalNodeList() {
+    var nodes = (window.nahanConfig && window.nahanConfig.slaveNodes ? window.nahanConfig.slaveNodes : "").split(/[\\s,;]+/).map(function(s){return s.trim();}).filter(Boolean);
+    var lp = (window.nahanConfig && Array.isArray(window.nahanConfig.linkedPanels)) ? window.nahanConfig.linkedPanels : [];
+    lp.forEach(function(p){
+        var raw = (p && typeof p === 'object') ? (p.url || '') : (p || '');
+        raw = String(raw).trim();
+        if(!raw) return;
+        raw = raw.replace(/^[a-zA-Z]+:\\/\\//, '').split('/')[0].split('@').pop();
+        var h = raw.indexOf('[') === 0 ? raw.slice(0, raw.indexOf(']') + 1) : raw.split(':')[0];
+        h = h.trim();
+        if(h) nodes.push(h);
+    });
+    return nodes.filter(function(v,i,a){return a.indexOf(v) === i;});
 }
 function buildNodeCheckboxes(wrapId, selectedNodes, allNodes) {
     const wrap = document.getElementById(wrapId);
@@ -8605,7 +8647,7 @@ function buildPortCheckboxes(wrapId, selectedPorts) {
                buildIPCheckboxes("edit-user-proxy-ips-wrap", checkedGlobalProxy.join(','), globalProxyIps);
                document.getElementById('edit-user-custom-proxy').value = customProxy.join(', ');
 
-               const globalNodes = (window.nahanConfig?.slaveNodes||"").split(/[\\r\\n,;]+/).map(s=>s.trim()).filter(Boolean);
+               const globalNodes = getGlobalNodeList();
                const userNodesList = (u.userNodes || "").split(/[\\r\\n,;]+/).map(s=>s.trim()).filter(Boolean);
                const checkedGlobalNodes = [];
                const customNodes = [];
